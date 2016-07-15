@@ -1,5 +1,9 @@
 package ru.apanov.pubsub;
 
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
@@ -15,6 +19,7 @@ import java.util.concurrent.TimeUnit;
  * Очередь безлимитная и может использовать все свободные ресурсы
  */
 public class MessageQueue {
+    private static final Logger logger = LoggerFactory.getLogger(MessageQueue.class);
 
     // У каждого консьюмера своя очередь сообщений
     private final ConcurrentHashMap<Topic, List<Channel>> topicChannels =
@@ -51,7 +56,8 @@ public class MessageQueue {
             try {
                 messages.put(message);
             } catch (InterruptedException e) {
-                Thread.interrupted();
+                Thread.currentThread().interrupted();
+                logger.info(Thread.currentThread().getName() + "was interrupted.");
             }
         }
 
@@ -65,11 +71,22 @@ public class MessageQueue {
                     Message message = messages.poll(1, TimeUnit.SECONDS);
                     if (message != null) {
                         listener.handleMessage(message);
+                        if (logger.isDebugEnabled()) {
+                            logger.debug("Consumer {}, was received message {}", endpoint, message);
+                        }
                     }
                 } catch (InterruptedException e) {
-                    Thread.interrupted();
+                    Thread.currentThread().interrupted();
+                    logger.info(Thread.currentThread().getName() + "was interrupted.");
                 }
             }
+        }
+
+        @Override
+        public String toString() {
+            return "Channel{" +
+                    "endpoint='" + endpoint + '\'' +
+                    '}';
         }
     }
 
@@ -86,6 +103,9 @@ public class MessageQueue {
                 channel.add(message);
                 i++;
             }
+            if (logger.isDebugEnabled()) {
+                logger.debug("Added message {} to {} channels.", message, i);
+            }
             return i;
         }
 
@@ -97,6 +117,7 @@ public class MessageQueue {
                     topicChannels.put(topic, channels);
                 }
                 channels.add(channel);
+                logger.debug("Route was added. {}, {}.", channel, topic);
             }
         }
 
@@ -105,6 +126,7 @@ public class MessageQueue {
             if (channels != null) {
                 channels.remove(channel);
             }
+            logger.debug("Route was removed. {}, {}.", channel, topic);
             return channels;
         }
     }

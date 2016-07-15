@@ -39,4 +39,12 @@ public class Message {
         result = 31 * result + (int) (timestamp ^ (timestamp >>> 32));
         return result;
     }
+
+    @Override
+    public String toString() {
+        return "Message{" +
+                "data='" + data + '\'' +
+                ", timestamp=" + timestamp +
+                '}';
+    }
 }
