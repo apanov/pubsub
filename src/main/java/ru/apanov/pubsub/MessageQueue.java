@@ -37,48 +37,39 @@ public class MessageQueue {
         final MessageListener listener;
         final BlockingQueue<Message> messages;
         final String endpoint;
-
-        private volatile boolean run;
+        final Thread thread;
 
         Channel(MessageListener listener, String endpoint) {
             this.listener = listener;
             this.messages = new LinkedBlockingQueue<Message>();
-            this.run = true;
             this.endpoint = endpoint;
+            this.thread = new Thread(this, "channel_for_" + endpoint);
         }
 
         void unsubscribe() {
             messages.clear();
-            run = false;
+            thread.interrupt();
         }
 
         void add(Message message) {
             try {
                 messages.put(message);
             } catch (InterruptedException e) {
-                Thread.currentThread().interrupted();
                 logger.info(Thread.currentThread().getName() + "was interrupted.");
             }
         }
 
         void start() {
-            new Thread(this, "channel_for_" + endpoint).start();
+            thread.start();
         }
 
         public void run() {
-            while (run) {
-                try {
-                    Message message = messages.poll(1, TimeUnit.SECONDS);
-                    if (message != null) {
-                        listener.handleMessage(message);
-                        if (logger.isDebugEnabled()) {
-                            logger.debug("Consumer {}, was received message {}", endpoint, message);
-                        }
-                    }
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupted();
-                    logger.info(Thread.currentThread().getName() + "was interrupted.");
+            try {
+                for (;;) {
+                    listener.handleMessage(messages.take());
                 }
+            } catch (InterruptedException e) {
+                logger.info(Thread.currentThread().getName() + "was interrupted.");
             }
         }
 
@@ -110,15 +101,16 @@ public class MessageQueue {
         }
 
         void addRoute(Channel channel, Topic topic) {
-            synchronized (topicChannels) {
-                List<Channel> channels = topicChannels.get(topic);
-                if (channels == null) {
-                    channels = new CopyOnWriteArrayList<Channel>();
-                    topicChannels.put(topic, channels);
+            List<Channel> channels = topicChannels.get(topic);
+            if (channels == null) {
+                channels = new CopyOnWriteArrayList<Channel>();
+                List<Channel> c = topicChannels.putIfAbsent(topic, channels);
+                if (c != null) {
+                    channels = c;
                 }
-                channels.add(channel);
-                logger.debug("Route was added. {}, {}.", channel, topic);
             }
+            channels.add(channel);
+            logger.debug("Route was added. {}, {}.", channel, topic);
         }
 
         List<Channel> removeRoute(Channel channel, Topic topic) {
@@ -139,16 +131,15 @@ public class MessageQueue {
     }
 
     void subscribe(String endpoint, MessageListener consumer, Topic topic) {
-        synchronized (endpointChannel) {
-            Channel channel = endpointChannel.get(endpoint);
-            if (channel == null) {
-                channel = new Channel(consumer, endpoint);
-                endpointChannel.put(endpoint, channel);
+        Channel channel = endpointChannel.get(endpoint);
+        if (channel == null) {
+            channel = new Channel(consumer, endpoint);
+            if (endpointChannel.putIfAbsent(endpoint, channel) == null) {
                 router.addRoute(channel, topic);
                 channel.start();
-            } else {
-                router.addRoute(channel, topic);
             }
+        } else {
+            router.addRoute(channel, topic);
         }
     }
 
